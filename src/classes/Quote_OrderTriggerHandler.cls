@@ -65,20 +65,21 @@
   *                                               3. fixed bug in autoGenContracts() where the Location field was not being populated on the Covered Location record
   *          3/1/2016     Jorge Aquino/ForeFront; 1. changed unlinkOppsFromQuoteOrders() to set the Parent Opportunity to null
   *                                               2. changed handleAfterInsert() to only send QuoteOrders that are linking to existing Opportunities into syncRelatedOpps()
+  *          3/26/2016    Jorge Aquino/ForeFront; For QTT Data Integrity effort, commented out createReleaseWorkorders() in createServiceMaxData() and createReleaseZeroData();
   **/
 public class Quote_OrderTriggerHandler {
     //public Quote_OrderTriggerHandler() {}
     
-    public static Boolean donotRunCreateSVMXDataMethod = false;
+  public static Boolean donotRunCreateSVMXDataMethod = false;
+
+  //List of QTT Order Id
+  //Populated by the QTT_Quote_Revision_TriggerUtility
+  public static Set<Id> executionQTTIdList = new Set<Id>();
+  public static Map<Id, QTT_Quote_Revision__c> executionQTTQuoteRevisionMap = new Map<Id, QTT_Quote_Revision__c>();
 
   public static void handleBeforeInsert(List<QTT_Order__c> newQuoteOrders){
 
     System.debug('Quote_OrderTriggerHandler.handleBeforeInsert');
-    // if all triggers are disabled, get out
-    Boolean getOut = checkAllTriggersDisabled();
-    if (getOut){
-      return;
-    }
 
     // define lists of QuoteOrders
     //List<QTT_Order__c> qOrdersForOwner = new List<QTT_Order__c>();
@@ -167,11 +168,6 @@ public class Quote_OrderTriggerHandler {
       system.debug('checkRecursive.runOnceBeforeUpdate() is True');
     }
     System.debug('Quote_OrderTriggerHandler.handleBeforeUpdate');
-    // if all triggers are disabled, get out
-    Boolean getOut = checkAllTriggersDisabled();
-    if (getOut){
-      return;
-    }
 
     System.debug('Triggers are not disabled');
 
@@ -307,11 +303,6 @@ public class Quote_OrderTriggerHandler {
   public static void handleAfterInsert(List<QTT_Order__c> newQuoteOrders){
 
     System.debug('Quote_OrderTriggerHandler.handleAfterInsert');
-    // if all triggers are disabled, get out
-    Boolean getOut = checkAllTriggersDisabled();
-    if (getOut){
-      return;
-    }
 
     List<QTT_Order__c> qOrdersLinkedToExistingOpps = new List<QTT_Order__c>(); // define list of QuoteOrders that are being linked to existing Opportunities
 
@@ -336,11 +327,6 @@ public class Quote_OrderTriggerHandler {
       return;
     }
     System.debug('Quote_OrderTriggerHandler.handleAfterUpdate');
-    // if all triggers are disabled, get out
-    Boolean getOut = checkAllTriggersDisabled();
-    if (getOut){
-      return;
-    }
 
     // define list of quote orders that need release zero data created (Job, Master Work Order, Location, Installed Product, Work Orders)
     //List<QTT_Order__c> releaseZeroOrders = new List<QTT_Order__c>();
@@ -405,9 +391,11 @@ public class Quote_OrderTriggerHandler {
 
       } else { // if order has not been cancelled
 
-        if (newQ.Opportunity__c != oldQ.Opportunity__c){ // if Opportunity link was changed
+        System.debug('newQ.QuoteOrder_Created_Opportunity__c is: '+newQ.QuoteOrder_Created_Opportunity__c);
+        if (newQ.Opportunity__c != oldQ.Opportunity__c && ! newQ.QuoteOrder_Created_Opportunity__c ){ // if Opportunity link was changed but Opp was not created by this QuoteOrder
 
           ordersForFirstTimeLink.add(newQ); // add order to list for first time link
+          System.debug(newQ.Id+' added to ordersForFirstTimeLink here');
 
         } else { // if Opportunity link was not changed
 
@@ -918,9 +906,9 @@ public class Quote_OrderTriggerHandler {
                * the location for this MasterWorkOrder */
               String locName = setStandardLocationName(qOrd.QTT_Quote_Order_Name__c,qOrd.QTT_QuoteJobCity__c,qOrd.QTT_QuoteJobState__c); //derive the standard location name
 
-              if (String.isNotBlank(locName) && locationNameMap.get(locName) != null){
+              if (String.isNotBlank(locName) && locationNameMap.get(locName.toUpperCase()).Id != null){
 
-                mWO.Location__c = locationNameMap.get(locName).Id; // attempt to set the location id on the Master Work Order by looking up in location map by name
+                mWO.Location__c = locationNameMap.get(locName.toUpperCase()).Id; // attempt to set the location id on the Master Work Order by looking up in location map by name
               }
             }
           }
@@ -1088,11 +1076,12 @@ public class Quote_OrderTriggerHandler {
 
   private static void unlinkOppsFromQuoteOrders(List<QTT_Order__c> qOrderList){
 
-    // check if Opportunity Processing is disabled
+     // check if Opportunity Processing is disabled
     Boolean getOut = checkOpportunitiesDisabled();
     if (getOut){
       return;
     }
+
     //System.debug('qOrderList is: '+qOrderList);
     Map<ID,Opportunity> oppMap = getOppsRelatedToQuoteOrders(qOrderList); // get map of opportunities related to the QuoteOrders
     System.debug('oppMap is: '+oppMap);
@@ -1337,9 +1326,21 @@ public class Quote_OrderTriggerHandler {
     // define map of revisions by RevisionRID
     Map<String,QTT_Quote_Revision__c> revMap = new Map<String,QTT_Quote_Revision__c>();
 
+    List<QTT_Quote_Revision__c> revisions = new List<QTT_Quote_Revision__c>();
+
+    if(executionQTTIdList.retainAll(qOrdsForRevision.keySet()))
+    {
+      revisions.addAll(executionQTTQuoteRevisionMap.values());
+    }
+     else
+    {
+      revisions =  [SELECT Id, Quote_Order__c, QTT_Revision_RID__c, Revision_Number__c
+                                                  FROM QTT_Quote_Revision__c WHERE Quote_Order__c IN :qOrdsForRevision.keySet()];
+    }  
+    
+
     // get revisions related to the QuoteOrders
-    for (List<QTT_Quote_Revision__c> revisions : [SELECT Id, Quote_Order__c, QTT_Revision_RID__c, Revision_Number__c
-                                                  FROM QTT_Quote_Revision__c WHERE Quote_Order__c IN :qOrdsForRevision.keySet()]){
+   /* for (QTT_Quote_Revision__c revisions : revisionsList){
 
       // initialize collection of QuoteOrder ids to process for each batch
       Set<ID> qOIDs = new Set<ID>();
@@ -1348,6 +1349,8 @@ public class Quote_OrderTriggerHandler {
        * by the QuteOrders as the "OrderedRevision" and update the lookup on
        * the related QuoteOrders */
        System.debug('revisions has: ' + revisions);
+
+      Set<ID> qOIDs = new Set<ID>();
       for (QTT_Quote_Revision__c rev : revisions) {
 
         // add the revision to the map keyed by RevisionRID
@@ -1358,34 +1361,42 @@ public class Quote_OrderTriggerHandler {
 
       }
 
-      if (qOIDs.size() > 0){
+      if (qOIDs.size() > 0)
+      {
 
         // process batch of QuoteOrders
-        for (ID qOID : qOIDs){
+        for (ID qOID : qOIDs)
+        {
 
           // get the QuoteOrder
           QTT_Order__c qOrd = qOrdsForRevision.get(qOID);
 
           // if the QuoteOrder has an OrderedRevision from QTT, update the lookup on the QuoteOrder to point to the correct Revision
-          if (String.isNotBlank(qOrd.QTT_Ordered_Rev__c)){
+          if (qOrd != null)
+          {
+            if (String.isNotBlank(qOrd.QTT_Ordered_Rev__c))
+            {
 
-            // get the revision from the map based on the RevisionRID
-            QTT_Quote_Revision__c rev = revMap.get(qOrd.QTT_Ordered_Rev__c);
+              // get the revision from the map based on the RevisionRID
+              QTT_Quote_Revision__c rev = revMap.get(qOrd.QTT_Ordered_Rev__c);
 
-            // if the Revision was found, update the lookup o hte QuoteOrder withe Revision's id
-            if (rev != null){
+              // if the Revision was found, update the lookup o hte QuoteOrder withe Revision's id
+              if (rev != null)
+              {
 
-              qOrd.Ordered_Revision__c = rev.Id;
+                qOrd.Ordered_Revision__c = rev.Id;
+              }
+
+            // if the QuoteOrder does not have an OrderedRevision from QTT, update the lookup on the QuoteOrder to null
+            } else 
+            {
+
+              qOrd.Ordered_Revision__c = null;
             }
-
-          // if the QuoteOrder does not have an OrderedRevision from QTT, update the lookup on the QuoteOrder to null
-          } else {
-
-            qOrd.Ordered_Revision__c = null;
           }
         }
       }
-    }
+    //}
   }
 
   private static void createReleaseWorkOrders(Set<String> qOrderIds, String rel){
@@ -1652,7 +1663,7 @@ public class Quote_OrderTriggerHandler {
     mWO.Country__c = qOrd.QTT_QuoteJobCountry__c;
   }
 
-  private static Boolean checkAllTriggersDisabled(){
+  public static Boolean checkAllTriggersDisabled(){
     String setting = 'DISABLE ALL TRIGGERS';
     Boolean result = checkQttTriggerSetting(setting);
     return result;
@@ -2159,7 +2170,7 @@ public class Quote_OrderTriggerHandler {
       newLoc.RecordTypeId = stdLocRtId;
 
       // add new location to map
-      newLocationsByNameMap.put(newLoc.Name, newLoc);
+      newLocationsByNameMap.put(newLoc.Name.toUpperCase(), newLoc);
     }
 
     // get existing locations with matching names
@@ -2170,7 +2181,7 @@ public class Quote_OrderTriggerHandler {
 
       SVMXC__Site__c currLoc = currentLocationsMap.get(locID);
 
-      newLocationsByNameMap.remove(currLoc.Name);
+      newLocationsByNameMap.remove(currLoc.Name.toUpperCase());
     }
 
     // if new locations still left in new map, create them
@@ -2218,9 +2229,10 @@ public class Quote_OrderTriggerHandler {
           iProd.SVMXC__State__c = qOrd.QTT_QuoteJobState__c;
 
         String locName = setStandardLocationName(qOrd.QTT_Quote_Order_Name__c,qOrd.QTT_QuoteJobCity__c,qOrd.QTT_QuoteJobState__c); //derive the standard location name
-        if (String.isNotBlank(locName) && locationNameMap.containsKey(locName)){
+        System.debug('locName is: '+locName+'; locName.toUpperCase() is: '+locName.toUpperCase());
+        if (String.isNotBlank(locName) && locationNameMap.containsKey(locName.toUpperCase())){
 
-          iProd.SVMXC__Site__c = locationNameMap.get(locName).Id; // attempt to set the location id on the Installed Product by looking up in location map by name
+          iProd.SVMXC__Site__c = locationNameMap.get(locName.toUpperCase()).Id; // attempt to set the location id on the Installed Product by looking up in location map by name
         }
 
         iProdsToAdd.add(iProd);
@@ -2296,13 +2308,16 @@ public class Quote_OrderTriggerHandler {
     // define list of Locations with matching names
     List<SVMXC__Site__c> locs = new List<SVMXC__Site__c>();
 
+    String locName;
+
     // process QuoteOrders and take names
     for (QTT_Order__c qOrd : qOrders){
 
       if (String.isNotBlank(qOrd.QTT_Quote_Order_Name__c)){
 
         // get standard location name
-        locNames.add(setStandardLocationName(qOrd.QTT_Quote_Order_Name__c,qOrd.QTT_QuoteJobCity__c,qOrd.QTT_QuoteJobState__c));
+        locName = setStandardLocationName(qOrd.QTT_Quote_Order_Name__c,qOrd.QTT_QuoteJobCity__c,qOrd.QTT_QuoteJobState__c);
+        locNames.add(locName.toUpperCase());
       }
     }
 
@@ -2315,7 +2330,7 @@ public class Quote_OrderTriggerHandler {
       // build map of Locations keyed by name
       for (SVMXC__Site__c loc : locs){
 
-        locationNameMap.put(loc.Name, loc);
+        locationNameMap.put(loc.Name.toUpperCase(), loc);
       }
     }
 
@@ -2727,9 +2742,19 @@ public class Quote_OrderTriggerHandler {
     }
 
     // get Opportunities to be linked
-    Map<ID,Opportunity> oppMap = new Map<ID,Opportunity>([SELECT Id, OwnerId, Owner.IsActive, Amount, Bid_Date__c, Construction_Type__c,
+    Map<ID,Opportunity> oppMap = new Map<ID,Opportunity>();
+
+    if(!QTT_Quote_Revision_TriggerUtility.executionOppMap.isEmpty() && 
+        QTT_Quote_Revision_TriggerUtility.executionOppMap.keySet().retainAll(oppIDs))
+    {
+        oppMap.putAll(QTT_Quote_Revision_TriggerUtility.executionOppMap);
+    }
+    else
+    {
+      oppMap = new Map<ID,Opportunity>([SELECT Id, OwnerId, Owner.IsActive, Amount, Bid_Date__c, Construction_Type__c,
                                                                   Installation_Type__c, QTT_RID__c, StageName, Vertical_Market__c
                                                           FROM Opportunity WHERE Id IN :oppIDs]);
+    }
 
     if (! oppMap.isEmpty()){ // if Opportunities were found
 
